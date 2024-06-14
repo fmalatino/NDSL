@@ -47,8 +47,6 @@ class Missing:
 
     def __call__(self, in_field: FloatField, out_result: FloatField) -> None:
         self._missing(in_field, out_result, 2.0) # GT4Py Stencil
-        tmp_field = out_result[:, :, :] + 2        # Regular Python code
-        self._missing(tmp_field, out_result, 2.0) # GT4Py Stencil
 
 if __name__ == "__main__":
     # Settings
