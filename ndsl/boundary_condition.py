@@ -25,75 +25,33 @@ def _shape_list_gen(
     nhalo: int = 0,
     i_adj: int = 0,
     j_adj: int = 0,
+    k_adj: int = 0,
 ) -> list:
-    i = 1
-    j = 1
-    k = 1
     shape_list = []
     for n in range(pelist_size):
-        if len(var_shape) == 3:
-            k = var_shape[2] - 1
         match locale:
-            case "east" | "west":
+            case "right" | "left":
                 i = var_shape[0] - i_adj
                 j = nhalo
-            case "north" | "south":
+            case "top" | "bottom":
                 i = nhalo
                 j = (
                     var_shape[1] - j_adj - nhalo
                     if n in (0, pelist_size - 1)
                     else var_shape[1] - j_adj
                 )
-            case _:
-                raise ValueError(f"{locale} is not an edge position")
-        shape_list.append((k, i, j))
+        if len(var_shape) == 3:
+            k = var_shape[2] - k_adj
+            shape_list.append((i,j,k))
+        else:
+            shape_list.append((i,j))
     return shape_list
-
 
 def _get_displs(counts: list) -> list:
     displs = [0]
     for n in range(1, len(counts)):
         displs.append(displs[n - 1] + counts[n - 1])
     return displs
-
-
-def _get_data_indices(npoints: int, nhalo: int, size: int, locale: str) -> list:
-    span = npoints // 2
-    match locale:
-        case "east" | "west":
-            indices_list = [(0, npoints)]
-            for n in range(1, size):
-                indices_list.append(
-                    (
-                        indices_list[n - 1][0] + span,
-                        indices_list[n - 1][0] + span + npoints,
-                    )
-                )
-        case "north" | "south":
-            indices_list = [(0, npoints - nhalo)]
-            indices_list.append(
-                (
-                    indices_list[0][0] + span - nhalo,
-                    indices_list[0][0] + span - nhalo + npoints,
-                )
-            )
-            for n in range(2, size - 1):
-                indices_list.append(
-                    (
-                        indices_list[n - 1][0] + span,
-                        indices_list[n - 1][0] + span + npoints,
-                    )
-                )
-            indices_list.append(
-                (
-                    indices_list[-1][0] + span,
-                    indices_list[-1][0] + span + npoints - nhalo,
-                )
-            )
-        case _:
-            raise ValueError(f"{locale} is not an edge position")
-    return indices_list
-
 
 class BoundaryCondition:
     file: Path
@@ -109,29 +67,29 @@ class BoundaryCondition:
 
     def __init__(
         self,
-        file: Path,
         comm: Communicator,
         layout: tuple,
         locale: str,
+        file: Path = None,
     ):
         self.file = file
         self._main_comm = comm
         pelist = []
         self._location = locale.lower()
         match self._location:
-            case "north":
+            case "top":
                 for n in range(layout[1]):
                     pelist.append(layout[1] * (layout[1] - 1) + n)
                 self._color = 1 if comm.rank in pelist else 0
-            case "south":
+            case "bottom":
                 for n in range(layout[1]):
                     pelist.append(n)
                 self._color = 1 if comm.rank in pelist else 0
-            case "east":
+            case "right":
                 for n in range(layout[0]):
                     pelist.append(layout[0] * (n + 1) - 1)
                 self._color = 1 if comm.rank in pelist else 0
-            case "west":
+            case "left":
                 for n in range(layout[0]):
                     pelist.append(layout[0] * n)
                 self._color = 1 if comm.rank in pelist else 0
@@ -145,11 +103,12 @@ class BoundaryCondition:
         self.var_list = []
         if self._sub_com_rank == 0 and self._color == 1:
             self._is_root = True
-            self.dataset = xr.open_dataset(file)
-            whole_var_list = list(self.dataset.keys())
-            self.var_list = [
-                var for var in whole_var_list if self._location in var.lower()
-            ]
+            if file is not None:
+                self.dataset = xr.open_dataset(file)
+                whole_var_list = list(self.dataset.keys())
+                self.var_list = [
+                    var for var in whole_var_list if self._location in var.lower()
+                ]
         self.var_list = self._sub_com.bcast(self.var_list) or []
 
     def scatter_bcs(self, state: T, timestep: int) -> None:
@@ -173,11 +132,9 @@ class BoundaryCondition:
                     )
                     recv_buf = np.empty(
                         shape=shape_list[self._sub_com_rank], dtype=var.dtype
-                    )
+                    ).flatten()
                     if self._sub_com_rank == 0:
-                        da = np.ascontiguousarray(self.dataset[var_name].data)
-                        if len(da.shape) == 3:
-                            da = da[:, np.newaxis, :, :]
+                        da = np.ascontiguousarray(self.dataset[var_name].data).flatten()
                         sendcounts = [
                             np.prod(shape_list[n]) for n in range(self._sub_com_size)
                         ]
@@ -189,26 +146,17 @@ class BoundaryCondition:
                         sendcounts = None
                         displs = None
                         datatype = None
+                    if self._sub_com_rank == 0:
+                        m = 0
+                        assert sendcounts is not None
+                        for n in range(self._sub_com_size):
+                            temp[m : m + sendcounts[n]] = da[m : m + sendcounts[n]]
+                            m += sendcounts[n]
+                    self._sub_com.Scatterv(
+                        [temp, sendcounts, displs, datatype], recv_buf, root=0
+                    )
                     match self._location:
-                        case "north":
-                            indices = _get_data_indices(
-                                npoints=shape_list[1][2],
-                                nhalo=n_halo,
-                                size=self._sub_com_size,
-                                locale=self._location,
-                            )
-                            if self._sub_com_rank == 0:
-                                m = 0
-                                assert indices is not None
-                                assert sendcounts is not None
-                                for n in range(self._sub_com_size):
-                                    temp[m : m + sendcounts[n]] = da[
-                                        timestep, :, :, indices[n][0] : indices[n][1]
-                                    ].flatten()
-                                    m += sendcounts[n]
-                            self._sub_com.Scatterv(
-                                [temp, sendcounts, displs, datatype], recv_buf, root=0
-                            )
+                        case "top":
                             js = 0
                             je = shape_list[self._sub_com_rank][2]
                             if self._sub_com_rank == 0:
@@ -226,40 +174,17 @@ class BoundaryCondition:
                                     .reshape(shape_list[self._sub_com_rank])
                                     .transpose(1, 2, 0)
                                 )
-                            setattr(state, var_name, var)
-                        case "south":
-                            indices = _get_data_indices(
-                                npoints=shape_list[1][2],
-                                nhalo=n_halo,
-                                size=self._sub_com_size,
-                                locale=self._location,
-                            )
-                            if self._sub_com_rank == 0:
-                                m = 0
-                                assert indices is not None
-                                assert sendcounts is not None
-                                for n in range(self._sub_com_size):
-                                    temp[m : m + sendcounts[n]] = da[
-                                        timestep, :, :, indices[n][0] : indices[n][1]
-                                    ].flatten()
-                                    m += sendcounts[n]
-                            self._sub_com.Scatterv(
-                                [temp, sendcounts, displs, datatype], recv_buf, root=0
-                            )
+                        case "bottom":
                             js = 0
-                            je = shape_list[self._sub_com_rank][2]
+                            je = shape_list[self._sub_com_rank][1]
                             if self._sub_com_rank == 0:
                                 js = n_halo
-                                je = shape_list[self._sub_com_rank][2] + n_halo
+                                je = shape_list[self._sub_com_rank][1] + n_halo
                             if len(var_shape) == 2:
                                 var[
                                     var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
-                                    js:je,
-                                ] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .squeeze(axis=0)
-                                )
+                                    js:je
+                                ] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                             if len(var_shape) == 3:
                                 var[
                                     var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
@@ -270,26 +195,7 @@ class BoundaryCondition:
                                     .reshape(shape_list[self._sub_com_rank])
                                     .transpose(1, 2, 0)
                                 )
-                            setattr(state, var_name, var)
-                        case "east":
-                            indices = _get_data_indices(
-                                npoints=shape_list[0][1],
-                                nhalo=n_halo,
-                                size=self._sub_com_size,
-                                locale=self._location,
-                            )
-                            if self._sub_com_rank == 0:
-                                m = 0
-                                assert indices is not None
-                                assert sendcounts is not None
-                                for n in range(self._sub_com_size):
-                                    temp[m : m + sendcounts[n]] = da[
-                                        timestep, :, indices[n][0] : indices[n][1], :
-                                    ].flatten()
-                                    m += sendcounts[n]
-                            self._sub_com.Scatterv(
-                                [temp, sendcounts, displs, datatype], recv_buf, root=0
-                            )
+                        case "right":
                             if len(var_shape) == 2:
                                 var[
                                     : var_shape[0] - iadj,
@@ -309,26 +215,7 @@ class BoundaryCondition:
                                     .reshape(shape_list[self._sub_com_rank])
                                     .transpose(1, 2, 0)[::-1]
                                 )
-                            setattr(state, var_name, var)
-                        case "west":
-                            indices = _get_data_indices(
-                                npoints=shape_list[0][1],
-                                nhalo=n_halo,
-                                size=self._sub_com_size,
-                                locale=self._location,
-                            )
-                            if self._sub_com_rank == 0:
-                                m = 0
-                                assert indices is not None
-                                assert sendcounts is not None
-                                for n in range(self._sub_com_size):
-                                    temp[m : m + sendcounts[n]] = da[
-                                        timestep, :, indices[n][0] : indices[n][1], :
-                                    ].flatten()
-                                    m += sendcounts[n]
-                            self._sub_com.Scatterv(
-                                [temp, sendcounts, displs, datatype], recv_buf, root=0
-                            )
+                        case "left":
                             if len(var_shape) == 2:
                                 var[
                                     : var_shape[0] - iadj,
@@ -348,14 +235,16 @@ class BoundaryCondition:
                                     .reshape(shape_list[self._sub_com_rank])
                                     .transpose(1, 2, 0)[::-1]
                                 )
-                            setattr(state, var_name, var)
+                    setattr(state, var_name, var)
 
     def write_out_bcs(
         self,
-        bc_file_name: Path,
         state: T,
+        bc_file_name: Path = None,
     ) -> None:
         if self._color == 1:
+            if bc_file_name is None:
+                bc_file_name = self.file
             for field_obj in dataclasses.fields(state):
                 var_name = field_obj.name
                 if var_name in self.var_list:
@@ -375,36 +264,36 @@ class BoundaryCondition:
                     )
                     send_buf = np.empty(
                         shape=shape_list[self._sub_com_rank], dtype=var.dtype
-                    )
+                    ).flatten()
                     match self._location:
-                        case "north":
+                        case "top":
                             js = 0
-                            je = shape_list[self._sub_com_rank][2]
+                            je = shape_list[self._sub_com_rank][1]
                             if self._sub_com_rank == 0:
                                 js = n_halo
-                                je = shape_list[self._sub_com_rank][2] + n_halo
+                                je = shape_list[self._sub_com_rank][1] + n_halo
                             if len(var_shape) == 2:
                                 send_buf[:] = var[:n_halo, js:je]
                             if len(var_shape) == 3:
                                 send_buf[:] = var[:n_halo, js:je, : var_shape[2] - kadj]
-                        case "south":
+                        case "bottom":
                             js = 0
-                            je = shape_list[self._sub_com_rank][2]
+                            je = shape_list[self._sub_com_rank][1]
                             if self._sub_com_rank == 0:
                                 js = n_halo
-                                je = shape_list[self._sub_com_rank][2] + n_halo
+                                je = shape_list[self._sub_com_rank][1] + n_halo
                             if len(var_shape) == 2:
                                 send_buf[:] = var[
                                     var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
                                     js:je,
-                                ]
+                                ].flatten()
                             if len(var_shape) == 3:
                                 send_buf[:] = var[
                                     var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
                                     js:je,
                                     : var_shape[2] - kadj,
                                 ]
-                        case "east":
+                        case "right":
                             if len(var_shape) == 2:
                                 send_buf[:] = var[
                                     : var_shape[0] - iadj,
@@ -416,7 +305,7 @@ class BoundaryCondition:
                                     var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
                                     : var_shape[2] - kadj,
                                 ]
-                        case "west":
+                        case "left":
                             if len(var_shape) == 2:
                                 send_buf[:] = var[
                                     : var_shape[0] - iadj,
@@ -441,3 +330,6 @@ class BoundaryCondition:
                         temp = None
                         datatype = None
                     self._sub_com.Gatherv(send_buf, [temp, sendcounts, displs, datatype], root=0)
+                    if self._sub_com_rank == 0:
+                        self.dataset = xr.DataArray(temp, name=var_name).to_dataset()
+                        self.dataset.to_netcdf(bc_file_name)
