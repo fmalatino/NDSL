@@ -63,7 +63,6 @@ class BoundaryCondition:
     _sub_com: CommABC
     _sub_com_rank: int
     _sub_com_size: int
-    _is_root: bool = False
 
     def __init__(
         self,
@@ -72,7 +71,7 @@ class BoundaryCondition:
         locale: str,
         file: Path = None,
     ):
-        self.file = file
+        self.file = Path(file)
         self._main_comm = comm
         pelist = []
         self._location = locale.lower()
@@ -102,13 +101,14 @@ class BoundaryCondition:
         self._sub_com_size = self._sub_com.Get_size()
         self.var_list = []
         if self._sub_com_rank == 0 and self._color == 1:
-            self._is_root = True
-            if file is not None:
+            if self.file.is_file():
                 self.dataset = xr.open_dataset(file)
                 whole_var_list = list(self.dataset.keys())
                 self.var_list = [
                     var for var in whole_var_list if self._location in var.lower()
                 ]
+            else:
+                self.dataset = None
         self.var_list = self._sub_com.bcast(self.var_list) or []
 
     def scatter_bcs(self, state: T, timestep: int) -> None:
@@ -129,6 +129,7 @@ class BoundaryCondition:
                         nhalo=n_halo,
                         i_adj=iadj,
                         j_adj=jadj,
+                        k_adj=kadj,
                     )
                     recv_buf = np.empty(
                         shape=shape_list[self._sub_com_rank], dtype=var.dtype
@@ -158,22 +159,14 @@ class BoundaryCondition:
                     match self._location:
                         case "top":
                             js = 0
-                            je = shape_list[self._sub_com_rank][2]
+                            je = shape_list[self._sub_com_rank][1]
                             if self._sub_com_rank == 0:
                                 js = n_halo
-                                je = shape_list[self._sub_com_rank][2] + n_halo
+                                je = shape_list[self._sub_com_rank][1] + n_halo
                             if len(var_shape) == 2:
-                                var[:n_halo, js:je] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .squeeze(axis=0)
-                                )
+                                var[:n_halo, js:je] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                             if len(var_shape) == 3:
-                                var[:n_halo, js:je, : var_shape[2] - kadj] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .transpose(1, 2, 0)
-                                )
+                                var[:n_halo, js:je, : var_shape[2] - kadj] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                         case "bottom":
                             js = 0
                             je = shape_list[self._sub_com_rank][1]
@@ -190,51 +183,31 @@ class BoundaryCondition:
                                     var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
                                     js:je,
                                     : var_shape[2] - kadj,
-                                ] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .transpose(1, 2, 0)
-                                )
+                                ] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                         case "right":
                             if len(var_shape) == 2:
                                 var[
                                     : var_shape[0] - iadj,
                                     var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
-                                ] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .squeeze(axis=0)[::-1]
-                                )
+                                ] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                             if len(var_shape) == 3:
                                 var[
                                     : var_shape[0] - iadj,
                                     var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
                                     : var_shape[2] - kadj,
-                                ] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .transpose(1, 2, 0)[::-1]
-                                )
+                                ] = recv_buf[:].reshape(shape_list[self._sub_com_rank])  
                         case "left":
                             if len(var_shape) == 2:
                                 var[
                                     : var_shape[0] - iadj,
                                     :n_halo,
-                                ] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .squeeze(axis=0)[::-1]
-                                )
+                                ] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                             if len(var_shape) == 3:
                                 var[
                                     : var_shape[0] - iadj,
                                     :n_halo,
                                     : var_shape[2] - kadj,
-                                ] = (
-                                    recv_buf[:]
-                                    .reshape(shape_list[self._sub_com_rank])
-                                    .transpose(1, 2, 0)[::-1]
-                                )
+                                ] = recv_buf[:].reshape(shape_list[self._sub_com_rank])
                     setattr(state, var_name, var)
 
     def write_out_bcs(
@@ -247,7 +220,9 @@ class BoundaryCondition:
                 bc_file_name = self.file
             for field_obj in dataclasses.fields(state):
                 var_name = field_obj.name
-                if var_name in self.var_list:
+                if self._location in var_name.lower():
+                    if var_name not in self.var_list:
+                        self.var_list.append(var_name)
                     var = getattr(state, var_name)
                     var_shape = var.shape
                     n_halo = var.metadata.n_halo
@@ -261,6 +236,7 @@ class BoundaryCondition:
                         nhalo=n_halo,
                         i_adj=iadj,
                         j_adj=jadj,
+                        k_adj=kadj,
                     )
                     send_buf = np.empty(
                         shape=shape_list[self._sub_com_rank], dtype=var.dtype
@@ -273,9 +249,9 @@ class BoundaryCondition:
                                 js = n_halo
                                 je = shape_list[self._sub_com_rank][1] + n_halo
                             if len(var_shape) == 2:
-                                send_buf[:] = var[:n_halo, js:je]
+                                send_buf[:] = var[:n_halo, js:je].flatten()
                             if len(var_shape) == 3:
-                                send_buf[:] = var[:n_halo, js:je, : var_shape[2] - kadj]
+                                send_buf[:] = var[:n_halo, js:je, : var_shape[2] - kadj].flatten()
                         case "bottom":
                             js = 0
                             je = shape_list[self._sub_com_rank][1]
@@ -292,31 +268,31 @@ class BoundaryCondition:
                                     var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
                                     js:je,
                                     : var_shape[2] - kadj,
-                                ]
+                                ].flatten()
                         case "right":
                             if len(var_shape) == 2:
                                 send_buf[:] = var[
                                     : var_shape[0] - iadj,
                                     var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
-                                ]
+                                ].flatten()
                             if len(var_shape) == 3:
                                 send_buf[:] = var[
                                     : var_shape[0] - iadj,
                                     var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
                                     : var_shape[2] - kadj,
-                                ]
+                                ].flatten()
                         case "left":
                             if len(var_shape) == 2:
                                 send_buf[:] = var[
                                     : var_shape[0] - iadj,
                                     :n_halo,
-                                ]
+                                ].flatten()
                             if len(var_shape) == 3:
                                 send_buf[:] = var[
                                     : var_shape[0] - iadj,
                                     :n_halo,
                                     : var_shape[2] - kadj,
-                                ]
+                                ].flatten()
                     if self._sub_com_rank == 0:
                         sendcounts = [
                             np.prod(shape_list[n]) for n in range(self._sub_com_size)
@@ -331,5 +307,11 @@ class BoundaryCondition:
                         datatype = None
                     self._sub_com.Gatherv(send_buf, [temp, sendcounts, displs, datatype], root=0)
                     if self._sub_com_rank == 0:
-                        self.dataset = xr.DataArray(temp, name=var_name).to_dataset()
-                        self.dataset.to_netcdf(bc_file_name)
+                        if self.dataset == None:
+                            self.dataset = xr.DataArray(temp, name=var_name).to_dataset()
+                            self.dataset.to_netcdf(bc_file_name)
+                        else:
+                            self.dataset.assign(temp, name=var_name)
+                            self.dataset.to_netcdf(bc_file_name, mode="w")
+
+                            
