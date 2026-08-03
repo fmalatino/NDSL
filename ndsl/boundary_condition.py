@@ -198,9 +198,10 @@ class BoundaryConditionCommunicator:
             self,
             var: Quantity,
             var_name: str,
-    ) -> xr.Dataset | None:
+            file_name: str,
+    ) -> None:
+        sub_da = None
         if self._color == 1:
-            sub_ds = xr.Dataset()
             var_shape = var.shape
             n_halo = var.metadata.n_halo
             iadj = 1 if var.dims[0] == "i" else 0
@@ -227,10 +228,11 @@ class BoundaryConditionCommunicator:
                         je = shape_list[self.rank][1] + n_halo
                     if len(var_shape) == 2:
                         send_buf[:] = var[:n_halo, js:je].flatten()
+                        dim = "size_2D_top"
                     if len(var_shape) == 3:
                         send_buf[:] = var[:n_halo, js:je, : var_shape[2] - kadj].flatten()
+                        dim = "size_3D_top"
                     var_name += "_top"
-                    dim = "size1"
                 case "bottom":
                     js = 0
                     je = shape_list[self.rank][1]
@@ -242,42 +244,45 @@ class BoundaryConditionCommunicator:
                             var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
                             js:je,
                         ].flatten()
+                        dim = "size_2D_bottom"
                     if len(var_shape) == 3:
                         send_buf[:] = var[
                             var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
                             js:je,
                             : var_shape[2] - kadj,
                         ].flatten()
+                        dim = "size_3D_bottom"
                     var_name += "_bottom"
-                    dim = "size1"
                 case "left":
                     if len(var_shape) == 2:
                         send_buf[:] = var[
                             : var_shape[0] - iadj,
                             :n_halo,
                         ].flatten()
+                        dim = "size_2D_left"
                     if len(var_shape) == 3:
                         send_buf[:] = var[
                             : var_shape[0] - iadj,
                             :n_halo,
                             : var_shape[2] - kadj,
                         ].flatten()
+                        dim = "size_3D_left"
                     var_name += "_left"
-                    dim = "size2"
                 case "right":
                     if len(var_shape) == 2:
                         send_buf[:] = var[
                             : var_shape[0] - iadj,
                             var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
                         ].flatten()
+                        dim = "size_2D_right"
                     if len(var_shape) == 3:
                         send_buf[:] = var[
                             : var_shape[0] - iadj,
                             var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
                             : var_shape[2] - kadj,
                         ].flatten()
+                        dim = "size_3D_right"
                     var_name += "_right"
-                    dim = "size2"
             if self.rank == 0:
                 sendcounts = [
                     np.prod(shape_list[n]) for n in range(self.size)
@@ -292,10 +297,13 @@ class BoundaryConditionCommunicator:
                 datatype = None
             self._sub_comm.Gatherv(send_buf, [temp, sendcounts, displs, datatype], root=0)
             if self.rank == 0:
-                sub_da = xr.DataArray(data=temp, dims=[dim])
-            else:
-                sub_da = None
-            return sub_da
+                sub_da = xr.DataArray(data=temp, dims=[dim], name=var_name)
+        gather_list = self._main_comm.comm._comm.gather(sub_da, root=0)
+        if self._main_comm.rank == 0:
+            for da in gather_list:
+                if da is not None:
+                    da.to_netcdf(file_name, mode="a")
+
 
 
 class BoundaryCondition:
@@ -376,22 +384,9 @@ class BoundaryCondition:
             if var_name not in self.var_list:
                 for direction in ["_top", "_bottom", "_left", "_right"]:
                     self.var_list.append(var_name + direction)
-            top_da = self.sub_comm_top.create_bc_data(var=var, var_name=var_name)
-            bottom_da = self.sub_comm_bottom.create_bc_data(var=var, var_name=var_name)
-            left_da = self.sub_comm_left.create_bc_data(var=var, var_name=var_name)
-            right_da = self.sub_comm_right.create_bc_data(var=var, var_name=var_name)
-            if top_da is not None:
-                self.dataset[top_da.name] = top_da
-            if bottom_da is not None:
-                self.dataset[bottom_da.name] = bottom_da
-            if left_da is not None:
-                self.dataset[left_da.name] = left_da
-            if right_da is not None:
-                self.dataset[right_da.name] = right_da
-            total_ds = self._main_comm.comm.Gather(self.dataset)
-            out_ds = None
-            if self._main_comm.rank == 0:
-                out_ds = xr.merge(total_ds, join="exact")
-                out_ds.to_netcdf(bc_file_name)
+                self.sub_comm_top.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                self.sub_comm_bottom.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                self.sub_comm_left.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                self.sub_comm_right.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
 
                             
