@@ -199,7 +199,7 @@ class BoundaryConditionCommunicator:
             var: Quantity,
             var_name: str,
             file_name: str,
-    ) -> None:
+    ) -> xr.DataArray | None:
         sub_da = None
         if self._color == 1:
             var_shape = var.shape
@@ -298,11 +298,12 @@ class BoundaryConditionCommunicator:
             self._sub_comm.Gatherv(send_buf, [temp, sendcounts, displs, datatype], root=0)
             if self.rank == 0:
                 sub_da = xr.DataArray(data=temp, dims=[dim], name=var_name)
-        gather_list = self._main_comm.comm._comm.gather(sub_da, root=0)
-        if self._main_comm.rank == 0:
-            for da in gather_list:
-                if da is not None:
-                    da.to_netcdf(file_name, mode="a")
+            return sub_da
+        # gather_list = self._main_comm.comm._comm.gather(sub_da, root=0)
+        # if self._main_comm.rank == 0:
+        #     for da in gather_list:
+        #         if da is not None:
+        #             da.to_netcdf(file_name, mode="a")
 
 
 
@@ -384,9 +385,18 @@ class BoundaryCondition:
             if var_name not in self.var_list:
                 for direction in ["_top", "_bottom", "_left", "_right"]:
                     self.var_list.append(var_name + direction)
-                self.sub_comm_top.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                self.sub_comm_bottom.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                self.sub_comm_left.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                self.sub_comm_right.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                top_da = self.sub_comm_top.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                bottom_da = self.sub_comm_bottom.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                left_da = self.sub_comm_left.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                right_da = self.sub_comm_right.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
+                gather_top = self._main_comm.comm._comm.gather(top_da, root=0)
+                gather_bottom = self._main_comm.comm._comm.gather(bottom_da, root=0)
+                gather_right = self._main_comm.comm._comm.gather(right_da, root=0)
+                gather_left = self._main_comm.comm._comm.gather(left_da, root=0)
+                if self._main_comm.rank == 0:
+                    gather_total = gather_top + gather_bottom + gather_left + gather_right
+                    for da in gather_total:
+                        if da is not None:
+                            da.to_netcdf(bc_file_name, mode="a")
 
                             
