@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numbers
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -9,7 +10,7 @@ from gt4py import storage as gt_storage
 
 from ndsl.config import Backend
 from ndsl.dsl.typing import Float
-from ndsl.initialization import GridSizer
+from ndsl.initialization import DataDimensions, GridSizer
 from ndsl.quantity import Quantity, QuantityHaloSpec
 from ndsl.quantity.quantity import normalize_dimensions
 
@@ -28,7 +29,7 @@ class QuantityFactory:
 
     def update_data_dimensions(
         self,
-        data_dimension_descriptions: dict[str, int],
+        data_dimension_descriptions: DataDimensions,
     ) -> None:
         """
         Update the length of data (non-x/y/z) dimensions, unknown data dimensions
@@ -38,15 +39,15 @@ class QuantityFactory:
             data_dimension_descriptions: Dict of name/length pairs
         """
         for name, size in data_dimension_descriptions.items():
-            if not isinstance(size, int):
+            if not isinstance(size, numbers.Integral):
                 raise TypeError(
-                    f"Wrong size type for data dimension '{name}'. Expected plain 'int', got {type(size)}."
+                    f"Wrong size type for data dimension '{name}'. Expected an integral number type, got {type(size)} instead."
                 )
         self.sizer.data_dimensions.update(data_dimension_descriptions)
 
     def add_data_dimensions(
         self,
-        data_dimension_descriptions: dict[str, int],
+        data_dimension_descriptions: DataDimensions,
     ) -> None:
         """
         Add new data (non-x/y/z) dimensions via a key-length pair. If the dimension
@@ -61,9 +62,9 @@ class QuantityFactory:
                     f"[NDSL] Data dimension {name} already exists! "
                     "Use `update_data_dimensions` if you meant to update the length."
                 )
-            if not isinstance(size, int):
+            if not isinstance(size, numbers.Integral):
                 raise TypeError(
-                    f"Wrong size type for data dimension '{name}'. Expected plain 'int', got {type(size)}."
+                    f"Wrong size type for data dimension '{name}'. Expected an integral number type, got {type(size)}."
                 )
 
         self.sizer.data_dimensions.update(data_dimension_descriptions)
@@ -72,7 +73,7 @@ class QuantityFactory:
         self,
         dims: Sequence[str],
         units: str,
-        dtype: npt.DTypeLike = Float,  # type: ignore[has-type]
+        dtype: npt.DTypeLike = Float,
         *,
         allow_mismatch_float_precision: bool = False,
     ) -> Quantity:
@@ -87,7 +88,7 @@ class QuantityFactory:
         self,
         dims: Sequence[str],
         units: str,
-        dtype: npt.DTypeLike = Float,  # type: ignore[has-type]
+        dtype: npt.DTypeLike = Float,
         *,
         allow_mismatch_float_precision: bool = False,
     ) -> Quantity:
@@ -102,7 +103,7 @@ class QuantityFactory:
         self,
         dims: Sequence[str],
         units: str,
-        dtype: npt.DTypeLike = Float,  # type: ignore[has-type]
+        dtype: npt.DTypeLike = Float,
         *,
         allow_mismatch_float_precision: bool = False,
     ) -> Quantity:
@@ -118,7 +119,7 @@ class QuantityFactory:
         dims: Sequence[str],
         units: str,
         value: Any,  # no type hint because it would be a TypeVar = type[dtype] and mypy says no
-        dtype: npt.DTypeLike = Float,  # type: ignore[has-type]
+        dtype: npt.DTypeLike = Float,
         *,
         allow_mismatch_float_precision: bool = False,
     ) -> Quantity:
@@ -188,7 +189,7 @@ class QuantityFactory:
         allocator: Callable,
         dims: Sequence[str],
         units: str,
-        dtype: npt.DTypeLike = Float,  # type: ignore[has-type]
+        dtype: npt.DTypeLike = Float,
         allow_mismatch_float_precision: bool = False,
     ) -> Quantity:
         origin = self.sizer.get_origin(dims)
@@ -219,7 +220,7 @@ class QuantityFactory:
         self,
         dims: Sequence[str],
         n_halo: int | None = None,
-        dtype: npt.DTypeLike = Float,  # type: ignore[has-type]
+        dtype: npt.DTypeLike = Float,
     ) -> QuantityHaloSpec:
         """Build memory specifications for the halo update.
 

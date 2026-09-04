@@ -2,6 +2,27 @@
 build-backend = "setuptools.build_meta"
 requires = ["setuptools >= 80", "setuptools-scm>=10"]
 
+[dependency-groups]
+dev = [
+  {include-group = 'docs'},
+  {include-group = 'lint'},
+  {include-group = 'test'}
+]
+docs = [
+  "mkdocstrings[python]",
+  "zensical"
+]
+lint = [
+  "flake8-bugbear",
+  "flake8-pyproject",
+  "pre-commit",
+  "types-PyYAML"
+]
+test = [
+  "coverage",
+  "pytest<9.1.0"  # starting with 9.1.0 we get issues with test detection
+]
+
 [project]
 authors = [{name = "NOAA/NASA"}]
 classifiers = [
@@ -11,48 +32,57 @@ classifiers = [
   "Private :: Do Not Upload",
   "Natural Language :: English",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13"
 ]
-dynamic = ["dependencies", "version"]
+dependencies = [
+  "dace @ git+https://github.com/spcl/dace.git@24e48e2dd91fcbfb295bc5ed31457ccbf75b56a5",
+  "gt4py @ git+https://github.com/Gridtools/gt4py.git@39f5ac45677fe6ec1449ea430fdd53ed768da62f",
+  "mpi4py>=4.1",
+  "cftime",
+  "xarray>=2025.01.2",  # datatree + fixes
+  "f90nml>=1.1.0",
+  "netcdf4==1.7.2",
+  "scipy",  # restart capacities only
+  "h5netcdf",  # for xarray
+  "h5py",  # for h5netcdf >= 1.8
+  "dask",  # for xarray
+  "numpy>=2",
+  "matplotlib",  # for plotting in boilerplate
+  "cartopy",  # for plotting in ndsl.viz
+  "pytest-subtests",  # for translate tests
+  "dacite"  # for state
+]
+dynamic = ["version"]
 license = "Apache-2.0"
 license-files = ["LICENSE.txt", "ndsl/viz/fv3/README.md"]
 name = "ndsl"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 
 [project.optional-dependencies]
 cuda12 = ['cupy-cuda12x>=12.0']
 cuda13 = ['cupy-cuda13x>=14.0']
 demos = ["ipython", "ipykernel"]
-dev = [
-  "flake8-pyproject",
-  "ndsl[demos]",
-  "ndsl[docs]",
-  "ndsl[test]",
-  "pre-commit"
-]
-docs = ["zensical", "mkdocstrings[python]"]
-extras = ["ndsl[docs]", "ndsl[demos]", "ndsl[test]", "ndsl[dev]"]
 hmm-cuda12 = ['numpy_allocator', 'ndsl[cuda12]']
 hmm-cuda13 = ['numpy_allocator', 'ndsl[cuda13]']
+openmpi = ['openmpi']
 pyfms = ["pyfms @ git+https://github.com/noaa-gfdl/pyfms.git"]
 serialbox = ["serialbox @ git+https://github.com/FlorianDeconinck/serialbox.git@feature/data_ijkbuff#subdirectory=src/serialbox-python"]
-test = [
-  "pytest<9.1.0",  # starting with 9.1.0 we get issues with test detection
-  "coverage"
-]
 zarr = ["zarr<3"]
 
 [project.scripts]
 best_guess_diff = "ndsl.stencils.testing.best_guess_diff:entry_point"
+ndsl-gencode = "ndsl.boilerplate.generate_code:main"
 ndsl-serialbox_to_netcdf = "ndsl.stencils.testing.serialbox_to_netcdf:entry_point"
 
 [project.urls]
 Repository = "https://github.com/NOAA-GFDL/NDSL"
 
 [tool.aliases]
+
+[tool.black]
+target-version = ["py312", "py313"]
 
 [tool.coverage.run]
 branch = true
@@ -80,7 +110,6 @@ max-line-length = 88
 [tool.isort]
 default_section = "THIRDPARTY"
 known_third_party = "f90nml,pytest,xarray,numpy,mpi4py,gt4py,dace"
-lines_after_imports = 2
 profile = "black"
 sections = "FUTURE,STDLIB,THIRDPARTY,FIRSTPARTY,LOCALFOLDER"
 

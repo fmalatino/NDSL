@@ -13,7 +13,6 @@ from mpi4py.util import dtlib
 
 from ndsl.comm.comm_abc import Comm, ReductionOperator, Request
 
-
 T = TypeVar("T")
 
 
