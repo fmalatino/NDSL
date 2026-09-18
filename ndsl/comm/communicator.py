@@ -638,6 +638,9 @@ class Communicator(abc.ABC, Generic[P]):
     def Scatterv(self, sendbuf, recvbuf, root=0, **kwargs):  # type: ignore[no-untyped-def]
         self.comm.Scatterv(sendbuf=sendbuf, recvbuf=sendbuf, root=root, **kwargs)
 
+    def Gatherv(self, sendbuf, recvbuf, root=0, **kwargs):  # type: ignore[no-untyped-def]
+        self.comm.Gatherv(sendbuf=sendbuf, recvbuf=sendbuf, root=root, **kwargs)
+
 
 def bcast_metadata_list(comm: CommABC, quantity_list: list[Quantity]):  # type: ignore[no-untyped-def]
     is_root = comm.Get_rank() == constants.ROOT_RANK

@@ -169,6 +169,12 @@ class CachingCommReader(Comm[T]):
     def Scatterv(self, sendbuf, recvbuf, root=0, **kwargs: dict):  # type: ignore[no-untyped-def]
         pass
 
+    def Gatherv(self, sendbuf, recvbuf, root=0, **kwargs: dict):  # type: ignore[no-untyped-def]
+        pass
+
+    def gather(self, sendobj, root=0, **kwargs):  # type: ignore[no-untyped-def]
+        pass
+
 
 class CachingCommWriter(Comm[T]):
     """
@@ -257,4 +263,10 @@ class CachingCommWriter(Comm[T]):
         raise NotImplementedError("CachingCommWriter.Allreduce_inplace")
 
     def Scatterv(self, sendbuf, recvbuf, root=0, **kwargs: dict):  # type: ignore[no-untyped-def]
+        pass
+
+    def Gatherv(self, sendbuf, recvbuf, root=0, **kwargs: dict):  # type: ignore[no-untyped-def]
+        pass
+
+    def gather(self, sendobj, root=0, **kwargs):  # type: ignore[no-untyped-def]
         pass

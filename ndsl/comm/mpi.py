@@ -99,3 +99,9 @@ class MPIComm(Comm):
 
     def Scatterv(self, sendbuf, recvbuf, root=0, **kwargs):  # type: ignore[no-untyped-def]
         self._comm.Scatterv(sendbuf, recvbuf, root, **kwargs)
+
+    def Gatherv(self, sendbuf, recvbuf, root=0, **kwargs):  # type: ignore[no-untyped-def]
+        self._comm.Scatterv(sendbuf, recvbuf, root, **kwargs)
+
+    def gather(self, sendobj, root=0, **kwargs):  # type: ignore[no-untyped-def]
+        return self._comm.gather(sendobj, root, **kwargs)

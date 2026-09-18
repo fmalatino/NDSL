@@ -87,3 +87,9 @@ class Comm(abc.ABC, Generic[T]):
 
     @abc.abstractmethod
     def Scatterv(self, sendbuf, recvbuf, root: int = 0, **kwargs: dict): ...  # type: ignore[no-untyped-def]
+
+    @abc.abstractmethod
+    def Gatherv(self, sendbuf, recvbuf, root: int = 0, **kwargs: dict): ...  # type: ignore[no-untyped-def]
+
+    @abc.abstractmethod
+    def gather(self, sendobj, root: int = 0, **kwargs: dict): ...  # type: ignore[no-untyped-def]

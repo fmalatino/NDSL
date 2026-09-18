@@ -213,3 +213,9 @@ class LocalComm(Comm[T]):
 
     def Scatterv(self, sendbuf, recvbuf, root=0, **kwargs: dict):  # type: ignore[no-untyped-def]
         pass
+
+    def Gatherv(self, sendbuf, recvbuf, root=0, **kwargs: dict):  # type: ignore[no-untyped-def]
+        pass
+
+    def gather(self, sendobj, root=0, **kwargs):  # type: ignore[no-untyped-def]
+        pass

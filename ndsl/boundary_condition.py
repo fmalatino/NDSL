@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
 import io
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar, Union
 
 import numpy as np
-import numpy.typing as npt
 import xarray as xr
 
 from ndsl import Quantity
 from ndsl.comm.comm_abc import Comm as CommABC
 from ndsl.comm.communicator import Communicator
 from ndsl.comm.mpi import get_mpi_type
-
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -30,7 +28,7 @@ def _shape_list_gen(
     j_adj: int = 0,
     k_adj: int = 0,
 ) -> list:
-    shape_list = []
+    shape_list: list[Union[tuple[Any, int], tuple[Any, int, Any]]] = []
     for n in range(pelist_size):
         match locale:
             case "right" | "left":
@@ -45,10 +43,11 @@ def _shape_list_gen(
                 )
         if len(var_shape) == 3:
             k = var_shape[2] - k_adj
-            shape_list.append((i,j,k))
+            shape_list.append((i, j, k))
         else:
-            shape_list.append((i,j))
+            shape_list.append((i, j))
     return shape_list
+
 
 def _get_displs(counts: list) -> list:
     displs = [0]
@@ -56,11 +55,13 @@ def _get_displs(counts: list) -> list:
         displs.append(displs[n - 1] + counts[n - 1])
     return displs
 
+
 class BoundaryConditionCommunicator:
     _main_comm: Communicator
     _sub_comm: CommABC
     _color: int
     _location: str
+
     def __init__(self, main_comm: Communicator, location: str, layout: tuple):
         self._main_comm = main_comm
         pelist = []
@@ -91,21 +92,21 @@ class BoundaryConditionCommunicator:
     @property
     def rank(self) -> int:
         return self._sub_comm.Get_rank()
-    
+
     @property
     def size(self) -> int:
         return self._sub_comm.Get_size()
-    
+
     @property
     def location(self) -> str:
         return self._location
-    
+
     def sub_scatterv(
-            self,
-            var: Quantity,
-            var_name: str,
-            dataset: xr.Dataset,
-    ):
+        self,
+        var: Quantity,
+        var_name: str,
+        dataset: xr.Dataset,
+    ) -> None:
         if self._color == 1:
             var_shape = var.shape
             n_halo = var.metadata.n_halo
@@ -119,11 +120,9 @@ class BoundaryConditionCommunicator:
                 nhalo=n_halo,
                 i_adj=iadj,
                 j_adj=jadj,
-                k_adj=kadj
+                k_adj=kadj,
             )
-            recv_buf = np.empty(
-                        shape=shape_list[self.rank], dtype=var.dtype
-                    ).flatten()
+            recv_buf = np.empty(shape=shape_list[self.rank], dtype=var.dtype).flatten()
             if self.rank == 0:
                 da = np.ascontiguousarray(dataset[var_name].data).flatten()
                 sendcounts = [np.prod(shape_list[n]) for n in range(self.size)]
@@ -139,7 +138,9 @@ class BoundaryConditionCommunicator:
                 sendcounts = None
                 displs = None
                 datatype = None
-            self._sub_comm.Scatterv([temp, sendcounts, displs, datatype], recv_buf, root=0)
+            self._sub_comm.Scatterv(
+                [temp, sendcounts, displs, datatype], recv_buf, root=0
+            )
 
             match self.location:
                 case "top":
@@ -151,7 +152,9 @@ class BoundaryConditionCommunicator:
                     if len(var_shape) == 2:
                         var[:n_halo, js:je] = recv_buf[:].reshape(shape_list[self.rank])
                     if len(var_shape) == 3:
-                        var[:n_halo, js:je, : var_shape[2] - kadj] = recv_buf[:].reshape(shape_list[self.rank])
+                        var[:n_halo, js:je, : var_shape[2] - kadj] = recv_buf[
+                            :
+                        ].reshape(shape_list[self.rank])
                 case "bottom":
                     js = 0
                     je = shape_list[self.rank][1]
@@ -159,13 +162,12 @@ class BoundaryConditionCommunicator:
                         js = n_halo
                         je = shape_list[self.rank][1] + n_halo
                     if len(var_shape) == 2:
-                        var[
-                            var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
-                            js:je
-                        ] = recv_buf[:].reshape(shape_list[self.rank])
+                        var[var_shape[0] - n_halo - 1 : var_shape[0] - 1, js:je] = (
+                            recv_buf[:].reshape(shape_list[self.rank])
+                        )
                     if len(var_shape) == 3:
                         var[
-                            var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
+                            var_shape[0] - n_halo - 1 : var_shape[0] - 1,
                             js:je,
                             : var_shape[2] - kadj,
                         ] = recv_buf[:].reshape(shape_list[self.rank])
@@ -173,12 +175,12 @@ class BoundaryConditionCommunicator:
                     if len(var_shape) == 2:
                         var[
                             : var_shape[0] - iadj,
-                            var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
+                            var_shape[1] - n_halo - 1 : var_shape[1] - 1,
                         ] = recv_buf[:].reshape(shape_list[self.rank])
                     if len(var_shape) == 3:
                         var[
                             : var_shape[0] - iadj,
-                            var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
+                            var_shape[1] - n_halo - 1 : var_shape[1] - 1,
                             : var_shape[2] - kadj,
                         ] = recv_buf[:].reshape(shape_list[self.rank])
                 case "left":
@@ -186,7 +188,9 @@ class BoundaryConditionCommunicator:
                         var[
                             : var_shape[0] - iadj,
                             :n_halo,
-                        ] = recv_buf[:].reshape(shape_list[self.rank])
+                        ] = recv_buf[
+                            :
+                        ].reshape(shape_list[self.rank])
                     if len(var_shape) == 3:
                         var[
                             : var_shape[0] - iadj,
@@ -195,10 +199,9 @@ class BoundaryConditionCommunicator:
                         ] = recv_buf[:].reshape(shape_list[self.rank])
 
     def create_bc_data(
-            self,
-            var: Quantity,
-            var_name: str,
-            file_name: str,
+        self,
+        var: Quantity,
+        var_name: str,
     ) -> xr.DataArray | None:
         sub_da = None
         if self._color == 1:
@@ -216,9 +219,7 @@ class BoundaryConditionCommunicator:
                 j_adj=jadj,
                 k_adj=kadj,
             )
-            send_buf = np.empty(
-                            shape=shape_list[self.rank], dtype=var.dtype
-                        ).flatten()
+            send_buf = np.empty(shape=shape_list[self.rank], dtype=var.dtype).flatten()
             match self.location:
                 case "top":
                     js = 0
@@ -230,7 +231,9 @@ class BoundaryConditionCommunicator:
                         send_buf[:] = var[:n_halo, js:je].flatten()
                         dim = "size_2D_top"
                     if len(var_shape) == 3:
-                        send_buf[:] = var[:n_halo, js:je, : var_shape[2] - kadj].flatten()
+                        send_buf[:] = var[
+                            :n_halo, js:je, : var_shape[2] - kadj
+                        ].flatten()
                         dim = "size_3D_top"
                     var_name += "_top"
                 case "bottom":
@@ -241,13 +244,13 @@ class BoundaryConditionCommunicator:
                         je = shape_list[self.rank][1] + n_halo
                     if len(var_shape) == 2:
                         send_buf[:] = var[
-                            var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
+                            var_shape[0] - n_halo - 1 : var_shape[0] - 1,
                             js:je,
                         ].flatten()
                         dim = "size_2D_bottom"
                     if len(var_shape) == 3:
                         send_buf[:] = var[
-                            var_shape[0] - n_halo - iadj : var_shape[0] - iadj,
+                            var_shape[0] - n_halo - 1 : var_shape[0] - 1,
                             js:je,
                             : var_shape[2] - kadj,
                         ].flatten()
@@ -272,21 +275,19 @@ class BoundaryConditionCommunicator:
                     if len(var_shape) == 2:
                         send_buf[:] = var[
                             : var_shape[0] - iadj,
-                            var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
+                            var_shape[1] - n_halo - 1 : var_shape[1] - 1,
                         ].flatten()
                         dim = "size_2D_right"
                     if len(var_shape) == 3:
                         send_buf[:] = var[
                             : var_shape[0] - iadj,
-                            var_shape[1] - n_halo - jadj : var_shape[1] - jadj,
+                            var_shape[1] - n_halo - 1 : var_shape[1] - 1,
                             : var_shape[2] - kadj,
                         ].flatten()
                         dim = "size_3D_right"
                     var_name += "_right"
             if self.rank == 0:
-                sendcounts = [
-                    np.prod(shape_list[n]) for n in range(self.size)
-                ]
+                sendcounts = [np.prod(shape_list[n]) for n in range(self.size)]
                 displs = _get_displs(sendcounts)
                 temp = np.empty(shape=sum(sendcounts), dtype=var.dtype)
                 datatype = get_mpi_type(var[:])
@@ -295,16 +296,14 @@ class BoundaryConditionCommunicator:
                 displs = None
                 temp = None
                 datatype = None
-            self._sub_comm.Gatherv(send_buf, [temp, sendcounts, displs, datatype], root=0)
+            self._sub_comm.Gatherv(
+                send_buf, [temp, sendcounts, displs, datatype], root=0
+            )
             if self.rank == 0:
                 sub_da = xr.DataArray(data=temp, dims=[dim], name=var_name)
             return sub_da
-        # gather_list = self._main_comm.comm._comm.gather(sub_da, root=0)
-        # if self._main_comm.rank == 0:
-        #     for da in gather_list:
-        #         if da is not None:
-        #             da.to_netcdf(file_name, mode="a")
-
+        else:
+            return None
 
 
 class BoundaryCondition:
@@ -323,13 +322,21 @@ class BoundaryCondition:
         self,
         comm: Communicator,
         layout: tuple,
-        file: str = None,
+        file: str | None = None,
     ):
         self._main_comm = comm
-        self.sub_comm_top = BoundaryConditionCommunicator(main_comm=comm, location="top", layout=layout)
-        self.sub_comm_bottom = BoundaryConditionCommunicator(main_comm=comm, location="bottom", layout=layout)
-        self.sub_comm_left = BoundaryConditionCommunicator(main_comm=comm, location="left", layout=layout)
-        self.sub_comm_right = BoundaryConditionCommunicator(main_comm=comm, location="right", layout=layout)
+        self.sub_comm_top = BoundaryConditionCommunicator(
+            main_comm=comm, location="top", layout=layout
+        )
+        self.sub_comm_bottom = BoundaryConditionCommunicator(
+            main_comm=comm, location="bottom", layout=layout
+        )
+        self.sub_comm_left = BoundaryConditionCommunicator(
+            main_comm=comm, location="left", layout=layout
+        )
+        self.sub_comm_right = BoundaryConditionCommunicator(
+            main_comm=comm, location="right", layout=layout
+        )
         self.var_list = []
         file_bytes = None
         if file is not None:
@@ -357,26 +364,20 @@ class BoundaryCondition:
                     dataset=self.dataset,
                 )
                 self.sub_comm_bottom.sub_scatterv(
-                    var=var,
-                    var_name=var_name + "_bottom",
-                    dataset=self.dataset
+                    var=var, var_name=var_name + "_bottom", dataset=self.dataset
                 )
                 self.sub_comm_left.sub_scatterv(
-                    var=var,
-                    var_name=var_name + "_left",
-                    dataset=self.dataset
+                    var=var, var_name=var_name + "_left", dataset=self.dataset
                 )
                 self.sub_comm_right.sub_scatterv(
-                    var=var,
-                    var_name=var_name + "_right",
-                    dataset=self.dataset
+                    var=var, var_name=var_name + "_right", dataset=self.dataset
                 )
                 setattr(state, var_name, var)
 
     def write_out_bcs(
         self,
         state: T,
-        bc_file_name: Path = None,
+        bc_file_name: Path,
     ) -> None:
         self.dataset = xr.Dataset()
         for field_obj in dataclasses.fields(state):
@@ -385,18 +386,30 @@ class BoundaryCondition:
             if var_name not in self.var_list:
                 for direction in ["_top", "_bottom", "_left", "_right"]:
                     self.var_list.append(var_name + direction)
-                top_da = self.sub_comm_top.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                bottom_da = self.sub_comm_bottom.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                left_da = self.sub_comm_left.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                right_da = self.sub_comm_right.create_bc_data(var=var, var_name=var_name, file_name=bc_file_name)
-                gather_top = self._main_comm.comm._comm.gather(top_da, root=0)
-                gather_bottom = self._main_comm.comm._comm.gather(bottom_da, root=0)
-                gather_right = self._main_comm.comm._comm.gather(right_da, root=0)
-                gather_left = self._main_comm.comm._comm.gather(left_da, root=0)
+                top_da = self.sub_comm_top.create_bc_data(
+                    var=var,
+                    var_name=var_name,
+                )
+                bottom_da = self.sub_comm_bottom.create_bc_data(
+                    var=var,
+                    var_name=var_name,
+                )
+                left_da = self.sub_comm_left.create_bc_data(
+                    var=var,
+                    var_name=var_name,
+                )
+                right_da = self.sub_comm_right.create_bc_data(
+                    var=var,
+                    var_name=var_name,
+                )
+                gather_top = self._main_comm.comm.gather(top_da, root=0)
+                gather_bottom = self._main_comm.comm.gather(bottom_da, root=0)
+                gather_right = self._main_comm.comm.gather(right_da, root=0)
+                gather_left = self._main_comm.comm.gather(left_da, root=0)
                 if self._main_comm.rank == 0:
-                    gather_total = gather_top + gather_bottom + gather_left + gather_right
+                    gather_total = (
+                        gather_top + gather_bottom + gather_left + gather_right
+                    )
                     for da in gather_total:
                         if da is not None:
                             da.to_netcdf(bc_file_name, mode="a")
-
-                            
