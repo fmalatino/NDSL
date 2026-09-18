@@ -6,7 +6,7 @@ from dace.utils import find_new_name
 from ndsl import ndsl_log
 from ndsl.dsl.dace.builder.stree.common import (
     AxisIterator,
-    is_cartesian_axis,
+    is_cartesian_loop,
     list_index,
 )
 from ndsl.dsl.dace.builder.stree.common.code_block import replace_variable_name
@@ -18,7 +18,7 @@ from ndsl.dsl.dace.builder.stree.common.memlet import memlet_is_transient_scalar
 # ----- DEV NOTE -----
 
 
-class OffgridTransientScalarSSA(tn.ScheduleNodeVisitor):
+class OffGridTransientScalarSSA(tn.ScheduleNodeVisitor):
     """Transform all off-grid transient scalar through SSA without Phi functions, e.g.
     ```python
         A = tasklet()
@@ -50,7 +50,7 @@ class OffgridTransientScalarSSA(tn.ScheduleNodeVisitor):
     which would capture the control flow above and replicate it.
 
     Because we do not address the Phi function problem this pass _will not_ yield a perfect SSA IR for
-    transient scalars. Use `OffgridTransientScalarWriteCounter` afterward to map results.
+    transient scalars. Use `OffGridTransientScalarWriteCounter` afterward to map results.
 
     The pass _will not_ apply SSA within cartesian blocks, but will keep read renaming going.
     """
@@ -81,11 +81,11 @@ class OffgridTransientScalarSSA(tn.ScheduleNodeVisitor):
 
     def visit_MapScope(self, node: tn.MapScope, in_cartesian: bool) -> None:
         for child in node.children:
-            self.visit(child, in_cartesian=is_cartesian_axis(node))
+            self.visit(child, in_cartesian=is_cartesian_loop(node))
 
     def visit_ForScope(self, node: tn.ForScope, in_cartesian: bool) -> None:
         for child in node.children:
-            self.visit(child, in_cartesian=is_cartesian_axis(node))
+            self.visit(child, in_cartesian=is_cartesian_loop(node))
 
     def visit_TaskletNode(self, node: tn.TaskletNode, in_cartesian: bool) -> None:
 
@@ -148,7 +148,7 @@ class OffgridTransientScalarSSA(tn.ScheduleNodeVisitor):
             self.visit(child, in_cartesian=in_cartesian)
 
 
-class OffgridTransientScalarWriteCounter(tn.ScheduleNodeVisitor):
+class OffGridTransientScalarWriteCounter(tn.ScheduleNodeVisitor):
     def __init__(self) -> None:
         super().__init__()
         self.scalar_writes: dict[str, int] = {}  # SSA
@@ -187,10 +187,10 @@ class ExtractOffGridTasklet(tn.ScheduleNodeVisitor):
 
     def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot) -> None:
         # Best effort at deploying SSA on transient scalar
-        OffgridTransientScalarSSA().visit(node)
+        OffGridTransientScalarSSA().visit(node)
 
         # Count the result of the above pass
-        count = OffgridTransientScalarWriteCounter()
+        count = OffGridTransientScalarWriteCounter()
         count.visit(node)
         self._transient_scalar_writes = count.scalar_writes
 
@@ -210,14 +210,14 @@ class ExtractOffGridTasklet(tn.ScheduleNodeVisitor):
         node.children = [*self._nodes_to_extract, *node.children]
 
     def visit_MapScope(self, node: tn.MapScope) -> None:
-        if is_cartesian_axis(node):
+        if is_cartesian_loop(node):
             return
 
         for child in node.children:
             self.visit(child)
 
     def visit_ForScope(self, node: tn.ForScope) -> None:
-        if is_cartesian_axis(node):
+        if is_cartesian_loop(node):
             return
 
         for child in node.children:
